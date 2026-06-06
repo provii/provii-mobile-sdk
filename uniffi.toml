@@ -1,0 +1,26 @@
+# UniFFI configuration for provii-mobile-sdk FFI bindings
+# Only includes types actually exported by the SDK
+[bindings.kotlin]
+package_name = "app.provii.wallet.sdk"
+cdylib_name = "provii_mobile_sdk_ffi"
+android_cleaner = false                # Use JNA cleaner instead of java.lang.ref.Cleaner for API < 33 compatibility
+
+[bindings.swift]
+module_name = "ProviiSDK"
+cdylib_name = "provii_mobile_sdk_ffi"
+omit_argument_labels = false
+
+# No custom types needed - the SDK uses standard JSON serialization
+# All complex types are passed as JSON strings and parsed on each platform
+[bindings.kotlin.custom_types]
+[bindings.swift.custom_types]
+
+# External type mappings (if needed for platform-storage)
+[bindings.kotlin.external_packages]
+"provii_mobile_sdk_platform_storage" = "app.provii.platform.storage"
+
+[bindings.swift.external_packages]
+"provii_mobile_sdk_platform_storage" = "ProviiPlatformStorage"
+
+[bindings]
+callback_interface = true

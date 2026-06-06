@@ -1,0 +1,22 @@
+examine_globs = ["crates/core/src/**/*.rs"]
+
+exclude_globs = ["crates/core/src/network.rs", "crates/core/src/async_flow.rs"]
+
+exclude_re = [
+  "impl core::fmt::Debug for",
+  "generate_proof_safe",
+  "generate_proof_bytes",
+  "build_verify_request_internal",
+]
+
+skip_calls = [
+  "log::info",
+  "log::error",
+  "log::warn",
+  "debug_crypto",
+  "debug_witness",
+  "debug_thread",
+]
+
+timeout_multiplier = 3.0
+minimum_test_timeout = 30.0

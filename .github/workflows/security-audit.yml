@@ -1,0 +1,455 @@
+name: Security Audit
+
+on:
+  schedule:
+    # Run weekly on Monday at 6am UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - '.github/workflows/security-audit.yml'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.github/dependabot.yml'
+      - '.github/CODEOWNERS'
+      - '.gitignore'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  audit:
+    name: Cargo Audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version =0.22.1
+
+      - name: Run security audit
+        run: cargo audit
+
+  cargo-deny:
+    name: Cargo Deny - License & Security Compliance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Run cargo deny
+        run: cargo deny check
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: moderate
+          deny-licenses: GPL-3.0, AGPL-3.0
+
+  supply-chain:
+    name: Supply Chain Checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Verify Cargo.lock exists
+        run: |
+          if [[ ! -f Cargo.lock ]]; then
+            echo "Cargo.lock missing - required for reproducible builds"
+            exit 1
+          fi
+
+      - name: Check for unpinned dependencies
+        run: |
+          # Ensure no wildcard dependencies (version = "*")
+          if grep -rE 'version\s*=\s*"\*"' Cargo.toml crates/*/Cargo.toml 2>/dev/null; then
+            echo "Found wildcard dependencies - pin all versions"
+            exit 1
+          fi
+
+      - name: Verify lockfile integrity
+        run: cargo check --locked
+
+  zizmor:
+    name: Zizmor Actions Security Analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Run Zizmor
+        uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e # v0.5.3
+        with:
+          min-severity: high  # Only block on high+ severity
+          advanced-security: false  # Disable SARIF upload if Code Scanning not enabled
+
+  gitleaks:
+    name: Gitleaks Secret Scanning
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE_KEY }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run Gitleaks (licensed)
+        if: ${{ env.GITLEAKS_LICENSE != '' }}
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE_KEY }}
+
+      - name: Install Gitleaks CLI (OSS fallback)
+        # WS-060: When the licence key is absent (fork PRs), fall back to the
+        # open-source gitleaks binary so secret scanning is never silently skipped.
+        # Version-pinned but no checksum verification. Gitleaks GitHub
+        # releases do not publish a checksums file in a stable location
+        # that curl can fetch atomically. The version pin mitigates most
+        # supply chain risk.
+        if: ${{ env.GITLEAKS_LICENSE == '' }}
+        run: |
+          GITLEAKS_VERSION="8.24.3"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Run Gitleaks (OSS mode)
+        if: ${{ env.GITLEAKS_LICENSE == '' }}
+        run: gitleaks detect --source . --verbose
+
+  semgrep:
+    name: Semgrep SAST
+    # WS-061: Removed dependabot actor exclusion. Semgrep must run on all PRs
+    # including dependency updates to catch vulnerable patterns in new code.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      HAS_SEMGREP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN != '' }}
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Semgrep
+        run: pip install semgrep==1.139.0
+
+      - name: Run Semgrep (blocking pass)
+        if: ${{ env.HAS_SEMGREP_TOKEN == 'true' }}
+        run: |
+          semgrep \
+            --config p/rust \
+            --config p/security-audit \
+            --config p/secrets \
+            --config .semgrep/ \
+            --error \
+            --severity ERROR \
+            .
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Run Semgrep (local rules only, no token)
+        if: ${{ env.HAS_SEMGREP_TOKEN != 'true' }}
+        run: |
+          semgrep \
+            --config .semgrep/ \
+            --severity ERROR \
+            --json \
+            --output /tmp/semgrep-results.json \
+            . || true
+
+          # Filter out findings inside #[cfg(test)] modules.
+          # Semgrep's pattern-not-inside cannot reliably match large Rust
+          # module bodies, so we post-filter by comparing finding line numbers
+          # against the first #[cfg(test)] boundary in each file.
+          python3 << 'FILTER'
+          import json, subprocess, sys
+
+          with open("/tmp/semgrep-results.json") as f:
+              data = json.load(f)
+
+          cfg_test_cache = {}
+          def get_cfg_test_line(path):
+              if path not in cfg_test_cache:
+                  result = subprocess.run(
+                      ["grep", "-n", r"#\[cfg(test)\]", path],
+                      capture_output=True, text=True
+                  )
+                  lines = [int(l.split(":")[0]) for l in result.stdout.strip().split("\n") if l]
+                  cfg_test_cache[path] = min(lines) if lines else None
+              return cfg_test_cache[path]
+
+          production_findings = []
+          for r in data.get("results", []):
+              path = r["path"]
+              line = r["start"]["line"]
+              cfg_line = get_cfg_test_line(path)
+              # Keep finding only if file has no #[cfg(test)] or finding is before it
+              if cfg_line is None or line < cfg_line:
+                  production_findings.append(r)
+
+          if production_findings:
+              print(f"::error::{len(production_findings)} Semgrep finding(s) in production code:")
+              for f in production_findings:
+                  loc = f"{f['path']}:{f['start']['line']}"
+                  print(f"  {f['check_id']} at {loc}")
+                  print(f"    {f.get('extra', {}).get('message', '').strip()}")
+              sys.exit(1)
+          else:
+              total = len(data.get("results", []))
+              print(f"Semgrep scan passed. {total} finding(s) in test code correctly excluded.")
+          FILTER
+
+      - name: Run Semgrep (SARIF pass)
+        if: ${{ always() && env.HAS_SEMGREP_TOKEN == 'true' }}
+        run: |
+          semgrep \
+            --config p/rust \
+            --config p/security-audit \
+            --config p/secrets \
+            --config .semgrep/ \
+            --sarif \
+            --output semgrep-results.sarif \
+            . || true
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF results
+        if: ${{ always() && env.HAS_SEMGREP_TOKEN == 'true' }}
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep
+
+  trivy:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '1'
+          limit-severities-for-sarif: "true"
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+  # ======================================================================
+  # Sentinel, single required check for branch protection
+  # ======================================================================
+  security-summary:
+    name: Security Summary
+    if: always()
+    needs: [audit, cargo-deny, dependency-review, supply-chain, zizmor, gitleaks, semgrep, trivy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check all security jobs
+        if: >-
+          contains(needs.audit.result, 'failure')
+          || contains(needs.cargo-deny.result, 'failure')
+          || contains(needs.dependency-review.result, 'failure')
+          || contains(needs.supply-chain.result, 'failure')
+          || contains(needs.zizmor.result, 'failure')
+          || contains(needs.gitleaks.result, 'failure')
+          || contains(needs.semgrep.result, 'failure')
+          || contains(needs.trivy.result, 'failure')
+          || contains(needs.audit.result, 'cancelled')
+          || contains(needs.cargo-deny.result, 'cancelled')
+          || contains(needs.dependency-review.result, 'cancelled')
+          || contains(needs.supply-chain.result, 'cancelled')
+          || contains(needs.zizmor.result, 'cancelled')
+          || contains(needs.gitleaks.result, 'cancelled')
+          || contains(needs.semgrep.result, 'cancelled')
+          || contains(needs.trivy.result, 'cancelled')
+        env:
+          RESULT_AUDIT: ${{ needs.audit.result }}
+          RESULT_CARGO_DENY: ${{ needs.cargo-deny.result }}
+          RESULT_DEP_REVIEW: ${{ needs.dependency-review.result }}
+          RESULT_SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
+          RESULT_ZIZMOR: ${{ needs.zizmor.result }}
+          RESULT_GITLEAKS: ${{ needs.gitleaks.result }}
+          RESULT_SEMGREP: ${{ needs.semgrep.result }}
+          RESULT_TRIVY: ${{ needs.trivy.result }}
+        run: |
+          echo "One or more security jobs did not succeed"
+          echo "audit=${RESULT_AUDIT}"
+          echo "cargo-deny=${RESULT_CARGO_DENY}"
+          echo "dependency-review=${RESULT_DEP_REVIEW}"
+          echo "supply-chain=${RESULT_SUPPLY_CHAIN}"
+          echo "zizmor=${RESULT_ZIZMOR}"
+          echo "gitleaks=${RESULT_GITLEAKS}"
+          echo "semgrep=${RESULT_SEMGREP}"
+          echo "trivy=${RESULT_TRIVY}"
+          exit 1
+      - name: All security checks passed
+        run: echo "All security jobs passed"

@@ -1,0 +1,33 @@
+[package]
+name = "provii-mobile-sdk-store-android"
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+repository.workspace = true
+description = "Android Keystore / StrongBox secure storage for Provii Mobile SDK"
+
+[dependencies]
+once_cell = { workspace = true }
+provii-mobile-sdk-platform-storage = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+zeroize = { workspace = true }
+
+# Android-only native bindings & JNI interoperability
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
+ndk-sys = { version = "0.5", default-features = false }
+ndk-context = { version = "0.1", default-features = false }
+ndk = "0.8"
+android_logger = "0.14"
+rayon.workspace = true
+[features]
+default = []
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rand = { version = "0.8", default-features = false, features = ["std"] }
+hex = { workspace = true }

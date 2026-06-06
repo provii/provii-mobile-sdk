@@ -1,0 +1,23 @@
+[package]
+name = "provii-mobile-sdk-store-ios"
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+repository.workspace = true
+description = "iOS Secure-Enclave backed storage for Provii Mobile SDK"
+
+[dependencies]
+provii-mobile-sdk-platform-storage = { workspace = true }
+log = { workspace = true }
+zeroize = { workspace = true }
+
+# iOS-only system bindings
+[target.'cfg(target_os = "ios")'.dependencies]
+core-foundation = { version = "0.9" }
+core-foundation-sys = { version = "0.8" }
+security-framework = { version = "2.9" }
+security-framework-sys = { version = "2.9" }
+
+[lints]
+workspace = true

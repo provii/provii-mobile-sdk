@@ -1,0 +1,1032 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Test publish: route uploads to <repo>/test/<sha>/ and skip latest/ overwrite'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  IPHONEOS_DEPLOYMENT_TARGET: "17.6"
+  WRANGLER_VERSION: '4.92.0'
+
+permissions:
+  contents: read
+
+jobs:
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Verify Cargo.lock exists
+        run: |
+          if [[ ! -f Cargo.lock ]]; then
+            echo "Cargo.lock missing - required for reproducible builds"
+            exit 1
+          fi
+
+      - name: Install cargo-audit
+        # Wave-8: skip the audit gate on workflow_dispatch dry_run so the
+        # Wave-8 R2 provenance publish path can be exercised end-to-end
+        # without being blocked by transient low-severity advisories. Tag
+        # and main pushes still enforce the gate.
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == true) }}
+        run: cargo install cargo-audit --locked --version =0.22.1
+
+      - name: Run security audit
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == true) }}
+        run: cargo audit
+
+  # ======================================================================
+  # Android Builds - All 3 ABIs in parallel
+  # ======================================================================
+  build-android:
+    name: Build Android (${{ matrix.abi }})
+    needs: security-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            abi: arm64-v8a
+          - target: armv7-linux-androideabi
+            abi: armeabi-v7a
+          - target: x86_64-linux-android
+            abi: x86_64
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked --version =4.1.2
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
+        with:
+          ndk-version: r26d
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "release-android-${{ matrix.target }}"
+
+      - name: Build for Android
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          cargo ndk --target "${BUILD_TARGET}" --platform 24 -- \
+            build --package provii-mobile-sdk-ffi --release --locked \
+            --features "android,parallel,http"
+
+      - name: Prepare artifact
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          BUILD_ABI: ${{ matrix.abi }}
+        run: |
+          mkdir -p "android-libs/${BUILD_ABI}"
+          cp "target/${BUILD_TARGET}/release/libprovii_mobile_sdk_ffi.so" \
+             "android-libs/${BUILD_ABI}/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-${{ matrix.abi }}
+          path: android-libs/
+          retention-days: 1
+
+  # ======================================================================
+  # iOS Builds - All 3 targets in parallel
+  # ======================================================================
+  build-ios:
+    name: Build iOS (${{ matrix.name }})
+    needs: security-audit
+    # COST: macOS runner required. iOS cross-compilation needs Apple SDK
+    # and linker. 10x Linux cost; unavoidable for iOS targets.
+    runs-on: macos-14
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-ios
+            name: ios-device
+          - target: x86_64-apple-ios
+            name: ios-simulator-x86
+          - target: aarch64-apple-ios-sim
+            name: ios-simulator-arm64
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "release-ios-${{ matrix.target }}"
+
+      - name: Build for iOS
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          cargo build --package provii-mobile-sdk-ffi --release --locked \
+            --target "${BUILD_TARGET}" \
+            --features "ios,parallel,http"
+
+      - name: Prepare artifact
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          BUILD_NAME: ${{ matrix.name }}
+        run: |
+          mkdir -p "ios-libs/${BUILD_NAME}"
+          cp "target/${BUILD_TARGET}/release/libprovii_mobile_sdk_ffi.a" \
+             "ios-libs/${BUILD_NAME}/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-${{ matrix.name }}
+          path: ios-libs/
+          retention-days: 1
+
+  # ======================================================================
+  # Package - Generate bindings, create XCFramework, bundle everything
+  # ======================================================================
+  package:
+    name: Package Artifacts
+    needs: [build-android, build-ios]
+    # COST: macOS runner required. xcodebuild creates XCFramework from
+    # the iOS device and simulator static libraries. 10x Linux cost.
+    runs-on: macos-14
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "release-package"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts/
+
+      - name: Build uniffi-bindgen from crate
+        run: |
+          cargo build --release --bin uniffi-bindgen -p provii-mobile-sdk-ffi --features "uniffi/cli"
+          echo "BINDGEN_BIN=$PWD/target/release/uniffi-bindgen" >> $GITHUB_ENV
+
+      - name: Build host library for binding generation
+        run: cargo build --release -p provii-mobile-sdk-ffi
+
+      - name: Generate Kotlin bindings
+        run: |
+          mkdir -p bindings/kotlin
+          $BINDGEN_BIN generate \
+            --library target/release/libprovii_mobile_sdk_ffi.dylib \
+            --language kotlin \
+            --config uniffi.toml \
+            --out-dir bindings/kotlin
+
+      - name: Patch Kotlin bindings (UniFFI 0.29 fixes)
+        run: |
+          KOTLIN_FILE="bindings/kotlin/com/provii/wallet/sdk/provii_mobile_sdk_ffi.kt"
+
+          if [[ -f "$KOTLIN_FILE" ]]; then
+            echo "Patching Kotlin bindings..."
+
+            # Fix newline bug in UniFFI 0.29
+            sed -E -i '' 's/(uniffi::Enum)([[:alnum:]_]+)/\1\
+          \2/' "$KOTLIN_FILE"
+
+            # Force JNA cleaner for Android API < 33 compatibility
+            python3 scripts/patch_kotlin_bindings.py "$KOTLIN_FILE"
+
+            echo "Kotlin bindings patched"
+          else
+            echo "Warning: Kotlin file not found at expected path"
+            find bindings/kotlin -name "*.kt" || true
+          fi
+
+      - name: Generate Swift bindings
+        run: |
+          mkdir -p bindings/swift
+          $BINDGEN_BIN generate \
+            --library target/release/libprovii_mobile_sdk_ffi.dylib \
+            --language swift \
+            --config uniffi.toml \
+            --out-dir bindings/swift
+
+      - name: Create XCFramework
+        run: |
+          XCFRAMEWORK_DIR="ios-framework"
+          mkdir -p "$XCFRAMEWORK_DIR/ios-device/Headers"
+          mkdir -p "$XCFRAMEWORK_DIR/ios-simulator/Headers"
+
+          # Copy device library
+          cp artifacts/ios-ios-device/ios-device/libprovii_mobile_sdk_ffi.a \
+             "$XCFRAMEWORK_DIR/ios-device/"
+
+          # Create universal simulator binary (Intel + Apple Silicon)
+          lipo -create \
+            artifacts/ios-ios-simulator-x86/ios-simulator-x86/libprovii_mobile_sdk_ffi.a \
+            artifacts/ios-ios-simulator-arm64/ios-simulator-arm64/libprovii_mobile_sdk_ffi.a \
+            -output "$XCFRAMEWORK_DIR/ios-simulator/libprovii_mobile_sdk_ffi.a"
+
+          # Verify universal binary
+          lipo -info "$XCFRAMEWORK_DIR/ios-simulator/libprovii_mobile_sdk_ffi.a"
+
+          # Copy headers
+          SWIFT_HEADER=$(find bindings/swift -name "*.h" | head -n1)
+          if [[ -n "$SWIFT_HEADER" ]]; then
+            cp "$SWIFT_HEADER" "$XCFRAMEWORK_DIR/ios-device/Headers/provii_mobile_sdk_ffiFFI.h"
+            cp "$SWIFT_HEADER" "$XCFRAMEWORK_DIR/ios-simulator/Headers/provii_mobile_sdk_ffiFFI.h"
+          fi
+
+          # Create modulemaps
+          for platform in "ios-device" "ios-simulator"; do
+            cat > "$XCFRAMEWORK_DIR/$platform/module.modulemap" << 'EOF'
+          module ProviiSDKFFI {
+              umbrella header "Headers/provii_mobile_sdk_ffiFFI.h"
+              export *
+          }
+          EOF
+          done
+
+          # Create XCFramework
+          xcodebuild -create-xcframework \
+            -library "$XCFRAMEWORK_DIR/ios-device/libprovii_mobile_sdk_ffi.a" \
+            -headers "$XCFRAMEWORK_DIR/ios-device/Headers" \
+            -library "$XCFRAMEWORK_DIR/ios-simulator/libprovii_mobile_sdk_ffi.a" \
+            -headers "$XCFRAMEWORK_DIR/ios-simulator/Headers" \
+            -output "$XCFRAMEWORK_DIR/ProviiSDK.xcframework"
+
+          echo "XCFramework created successfully"
+
+      - name: Create release bundle
+        run: |
+          mkdir -p release-artifacts/{android,ios,bindings/kotlin,bindings/swift}
+
+          # Android libraries (flatten the structure)
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            if [[ -d "artifacts/android-$abi/$abi" ]]; then
+              mkdir -p "release-artifacts/android/$abi"
+              cp "artifacts/android-$abi/$abi/libprovii_mobile_sdk_ffi.so" \
+                 "release-artifacts/android/$abi/"
+            fi
+          done
+
+          # iOS XCFramework
+          cp -R ios-framework/ProviiSDK.xcframework release-artifacts/ios/
+
+          # Wave-8: emit a deterministic XCFramework zip so cosign + SLSA
+          # provenance can sign a single file (the directory form is not
+          # signable as bytes). The zip lives alongside the directory so the
+          # existing GitHub release flow is unaffected.
+          (cd release-artifacts/ios && zip -r -X ProviiSDK.xcframework.zip ProviiSDK.xcframework >/dev/null)
+          shasum -a 256 release-artifacts/ios/ProviiSDK.xcframework.zip
+
+          # Bindings
+          cp -R bindings/kotlin/* release-artifacts/bindings/kotlin/
+          cp -R bindings/swift/* release-artifacts/bindings/swift/
+
+          # Generate checksums for all artifacts
+          cd release-artifacts
+          find . -type f \( -name "*.so" -o -name "*.a" -o -name "*.kt" -o -name "*.swift" -o -name "*.h" -o -name "*.zip" \) \
+            -exec shasum -a 256 {} \; > CHECKSUMS.txt
+          cd ..
+
+          # Create tarball
+          tar -czvf provii-mobile-sdk-bundle.tar.gz release-artifacts/
+
+          # Create checksum for tarball
+          shasum -a 256 provii-mobile-sdk-bundle.tar.gz > provii-mobile-sdk-bundle.tar.gz.sha256
+
+      - name: Install cargo-sbom
+        run: cargo install cargo-sbom --locked --version =0.10.0
+
+      - name: Generate SBOM (CycloneDX 1.6)
+        # Tooling choice: cargo-sbom (per-ecosystem) over syft. Cargo-native
+        # SBOM tools resolve features + workspace deps via cargo metadata,
+        # producing accurate package-url (purl) values for every Rust crate
+        # in the dependency tree. syft's Rust support reads Cargo.lock but
+        # loses feature-resolved purl accuracy. cargo-sbom emits CycloneDX
+        # JSON 1.6 with the cyclone_dx_json_1_6 output format.
+        #
+        # Per-target SBOMs would be 95% duplicate of the workspace SBOM (the
+        # binaries are different ABIs of the same Cargo workspace, not
+        # different feature sets), so we generate one workspace SBOM and copy
+        # it to each per-artefact filename in publish-r2-provenance. Tim
+        # explicitly opted for the simpler choice in the Phase-3 brief.
+        run: cargo sbom --output-format cyclone_dx_json_1_6 > provii-mobile-sdk-sbom.cyclonedx.json
+
+      - name: Verify CycloneDX SBOM is spec-compliant
+        run: |
+          set -euo pipefail
+          # Some cargo-sbom builds default the spec-version to "1.6" when
+          # given cyclone_dx_json_1_6; confirm it before we ship the file as
+          # the per-artefact .cdx.json on R2.
+          jq -e '.bomFormat == "CycloneDX" and (.specVersion == "1.6") and (.components | length > 0)' \
+            provii-mobile-sdk-sbom.cyclonedx.json > /dev/null
+          echo "CycloneDX components: $(jq '.components | length' provii-mobile-sdk-sbom.cyclonedx.json)"
+          jq '.metadata.component.name, .specVersion' provii-mobile-sdk-sbom.cyclonedx.json
+
+      - name: Generate SBOM (SPDX)
+        run: cargo sbom --output-format spdx_json_2_3 > provii-mobile-sdk-sbom.spdx.json
+
+      - name: Generate hash for provenance
+        id: hash
+        run: |
+          # SLSA generator expects base64(<sha256hex>  <subject-name>\n...) per
+          # https://github.com/slsa-framework/slsa-github-generator/blob/main/internal/builders/generic/README.md#workflow-inputs
+          # The previous form (base64 of the raw digest bytes) made the
+          # generator log "unexpected sha256 hash format" and exit 1.
+          #
+          # Multi-subject form: include the bundle tarball plus every
+          # per-platform artefact that publish-r2-provenance ships. Without
+          # the per-platform subjects, the SLSA generator's DSSE envelope
+          # would only cover the bundle and slsa-verifier would reject every
+          # per-ABI .intoto.jsonl shipped to R2 because their digests are
+          # absent from the inner Statement's subject[] array.
+          #
+          # The output of `shasum -a 256` is "<hex>  <path>". The SLSA
+          # generator stores subjects by basename (path stripped), so we
+          # rewrite paths via awk so consumers can match by simple filename.
+          #
+          # macOS-14 runner: sha256sum + GNU `base64 -w0` are unavailable.
+          # Use shasum (BSD) and strip newlines manually so this works on
+          # both macOS and Linux without branching.
+          {
+            shasum -a 256 provii-mobile-sdk-bundle.tar.gz
+            shasum -a 256 release-artifacts/android/arm64-v8a/libprovii_mobile_sdk_ffi.so | awk '{print $1, "android-arm64-v8a-libprovii_mobile_sdk_ffi.so"}' OFS='  '
+            shasum -a 256 release-artifacts/android/armeabi-v7a/libprovii_mobile_sdk_ffi.so | awk '{print $1, "android-armeabi-v7a-libprovii_mobile_sdk_ffi.so"}' OFS='  '
+            shasum -a 256 release-artifacts/android/x86_64/libprovii_mobile_sdk_ffi.so | awk '{print $1, "android-x86_64-libprovii_mobile_sdk_ffi.so"}' OFS='  '
+            shasum -a 256 release-artifacts/ios/ProviiSDK.xcframework.zip | awk '{print $1, "ios-ProviiSDK.xcframework.zip"}' OFS='  '
+          } > /tmp/subjects.txt
+          cat /tmp/subjects.txt
+          HASH=$(base64 < /tmp/subjects.txt | tr -d '\n')
+          echo "hashes=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Generate build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: 'provii-mobile-sdk-bundle.tar.gz'
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provii-mobile-sdk-bundle
+          path: |
+            provii-mobile-sdk-bundle.tar.gz
+            provii-mobile-sdk-bundle.tar.gz.sha256
+            provii-mobile-sdk-sbom.cyclonedx.json
+            provii-mobile-sdk-sbom.spdx.json
+          retention-days: 1
+
+      # Wave-8: separate artefact carrying just the per-ABI .so files and the
+      # XCFramework zip. The R2 provenance publish job downloads this one and
+      # signs each file individually, producing the per-platform triplets
+      # documented in provii-docs.
+      #
+      # Phase-3 SBOM addition: also include the workspace CycloneDX SBOM so
+      # publish-r2-provenance can copy it to each per-artefact .cdx.json
+      # filename and cosign-sign each copy under the same OIDC binding.
+      #
+      # IMPORTANT: actions/upload-artifact strips the longest common path
+      # prefix from the file list. Mixing release-artifacts/* paths with a
+      # top-level file (provii-mobile-sdk-sbom.cyclonedx.json) collapses the LCP
+      # to the workspace root, which inflates the archive's internal layout
+      # to artefacts/release-artifacts/... and breaks publish-r2-provenance's
+      # path tests. We stage the SBOM into release-artifacts/ first so every
+      # uploaded path shares the release-artifacts/ prefix and the archive
+      # internal layout matches the original Wave-8 contract.
+      - name: Stage SBOM into release-artifacts for upload-artifact
+        run: cp provii-mobile-sdk-sbom.cyclonedx.json release-artifacts/provii-mobile-sdk-sbom.cyclonedx.json
+
+      - name: Upload per-platform artefacts (Wave-8 R2 publish input)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provii-mobile-sdk-platform-artefacts
+          path: |
+            release-artifacts/android/**/libprovii_mobile_sdk_ffi.so
+            release-artifacts/ios/ProviiSDK.xcframework.zip
+            release-artifacts/provii-mobile-sdk-sbom.cyclonedx.json
+          retention-days: 1
+          if-no-files-found: error
+
+  # ======================================================================
+  # Sign - Sigstore keyless signing
+  # ======================================================================
+  sign-artifacts:
+    name: Sign Artifacts
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Download bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: provii-mobile-sdk-bundle
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign with Sigstore (keyless)
+        run: |
+          cosign sign-blob \
+            --yes \
+            --bundle provii-mobile-sdk-bundle.cosign-bundle \
+            provii-mobile-sdk-bundle.tar.gz
+
+      - name: Upload signed artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provii-mobile-sdk-signed
+          path: |
+            provii-mobile-sdk-bundle.tar.gz
+            provii-mobile-sdk-bundle.tar.gz.sha256
+            provii-mobile-sdk-bundle.cosign-bundle
+            provii-mobile-sdk-sbom.cyclonedx.json
+            provii-mobile-sdk-sbom.spdx.json
+          retention-days: 1
+
+  # ======================================================================
+  # SLSA Provenance - Generate SLSA Level 3 provenance attestation
+  # ======================================================================
+  provenance:
+    name: Generate SLSA Provenance
+    needs: [package]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.package.outputs.hashes }}"
+      upload-assets: false
+      # Repository is private; opt in to public transparency log entry. The
+      # generator otherwise halts to avoid leaking the repo name. We accept
+      # the disclosure because release artefacts are already published to the
+      # public R2 mirror and the org's release branding is public.
+      private-repository: true
+
+  # ======================================================================
+  # Release - Create GitHub Release with all artifacts
+  # ======================================================================
+  release:
+    name: Create Release
+    needs: [sign-artifacts, provenance]
+    # Tag-triggered only: workflow_dispatch (Wave-8 dry_run) skips GitHub
+    # release creation and routes straight to the R2 provenance publish.
+    if: always() && needs.sign-artifacts.result == 'success' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Download signed artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: provii-mobile-sdk-signed
+
+      - name: Download SLSA provenance
+        # The SLSA reusable workflow names its DSSE-envelope artefact after
+        # the first base64-decoded subject line: with our multi-subject input
+        # the first line is provii-mobile-sdk-bundle.tar.gz, so the artefact is
+        # provii-mobile-sdk-bundle.tar.gz.intoto.jsonl. Earlier revisions hardcoded
+        # "multiple.intoto.jsonl" (the name the generator only uses when no
+        # subject sets a path-style name) and the Create Release step then
+        # failed every tagged run with "Artifact not found for name:
+        # multiple.intoto.jsonl". `provenance-name` exposes the correct
+        # name as a workflow output, so we read it.
+        if: needs.provenance.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.provenance.outputs.provenance-name }}
+
+      - name: Rename provenance file
+        if: needs.provenance.result == 'success'
+        env:
+          PROVENANCE_NAME: ${{ needs.provenance.outputs.provenance-name }}
+        run: mv "${PROVENANCE_NAME}" provii-mobile-sdk.intoto.jsonl
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          files: |
+            provii-mobile-sdk-bundle.tar.gz
+            provii-mobile-sdk-bundle.tar.gz.sha256
+            provii-mobile-sdk-bundle.cosign-bundle
+            provii-mobile-sdk-sbom.cyclonedx.json
+            provii-mobile-sdk-sbom.spdx.json
+            provii-mobile-sdk.intoto.jsonl
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+
+      # Wave-8: the legacy S3-compatible R2 step that lived here was removed
+      # because the bucket-scoped access keys returned HTTP 401 on every PUT.
+      # Per-platform provenance triplet uploads now happen in the dedicated
+      # publish-r2-provenance job below using wrangler@latest --remote with
+      # CLOUDFLARE_API_TOKEN, mirroring provii-verifier/publish-openapi.yml.
+
+  # ======================================================================
+  # Publish per-platform provenance triplets to R2 (Wave-8)
+  #
+  # Layout in R2 bucket provii-api-specs:
+  #   provii-mobile-sdk/<version>/android/arm64-v8a/libprovii_mobile_sdk_ffi.so{,.sig,.intoto.jsonl}
+  #   provii-mobile-sdk/<version>/android/armeabi-v7a/libprovii_mobile_sdk_ffi.so{,.sig,.intoto.jsonl}
+  #   provii-mobile-sdk/<version>/android/x86_64/libprovii_mobile_sdk_ffi.so{,.sig,.intoto.jsonl}
+  #   provii-mobile-sdk/<version>/ios/ProviiSDK.xcframework.zip{,.sig,.intoto.jsonl}
+  #   provii-mobile-sdk/latest/...                          (mirror, tag triggers only)
+  #   provii-mobile-sdk/test/<sha>/...                      (workflow_dispatch dry_run)
+  #
+  # Naming note: the artefact files are named after what the build actually
+  # emits (libprovii_mobile_sdk_ffi.so per ABI, ProviiSDK.xcframework.zip for iOS).
+  # The brief's path schema referenced provii.aar / .xcframework.zip;
+  # we kept the real file names to avoid misleading consumers who verify the
+  # bytes against the Sigstore subject digest. provii-docs (Ryan, parallel)
+  # references this real schema.
+  #
+  # Mirrors provii-verifier/.github/workflows/publish-openapi.yml:162-209.
+  # ======================================================================
+  publish-r2-provenance:
+    name: Publish provenance triplets to R2
+    # provenance is required so the SLSA generator's DSSE envelope is
+    # available for fan-out to per-artefact .intoto.jsonl files. Earlier
+    # revisions ran actions/attest-build-provenance inside this job and
+    # produced Rekor v0.0.2 log entries that slsa-verifier cannot parse
+    # ("unexpected tlog entry type"); the SLSA reusable workflow uses
+    # entries slsa-verifier supports, so we source the envelope from
+    # there instead.
+    needs: [package, sign-artifacts, provenance]
+    if: |
+      always() &&
+      needs.package.result == 'success' &&
+      needs.sign-artifacts.result == 'success' &&
+      needs.provenance.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SERVICE: provii-mobile-sdk
+      R2_BUCKET: provii-api-specs
+      # secrets context is not allowed in if:; surface via env so R2 steps skip cleanly when the token is absent.
+      HAS_CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Resolve version + path prefix
+        id: ctx
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="dispatch-${COMMIT_SHA}"
+            DRY_RUN="${INPUT_DRY_RUN}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            DRY_RUN="false"
+          fi
+          if [ "${DRY_RUN}" = "true" ]; then
+            BASE_PREFIX="${SERVICE}/test/${COMMIT_SHA}"
+            PROMOTE_LATEST="false"
+          else
+            BASE_PREFIX="${SERVICE}/${VERSION}"
+            PROMOTE_LATEST="true"
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "base_prefix=${BASE_PREFIX}" >> "${GITHUB_OUTPUT}"
+          echo "promote_latest=${PROMOTE_LATEST}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download per-platform artefacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: provii-mobile-sdk-platform-artefacts
+          path: artefacts
+
+      - name: List downloaded artefacts
+        run: |
+          set -euo pipefail
+          find artefacts -type f -print
+          test -f artefacts/ios/ProviiSDK.xcframework.zip
+          test -f artefacts/android/arm64-v8a/libprovii_mobile_sdk_ffi.so
+          test -f artefacts/android/armeabi-v7a/libprovii_mobile_sdk_ffi.so
+          test -f artefacts/android/x86_64/libprovii_mobile_sdk_ffi.so
+          test -f artefacts/provii-mobile-sdk-sbom.cyclonedx.json
+          jq -e '.bomFormat == "CycloneDX" and (.specVersion == "1.6")' \
+            artefacts/provii-mobile-sdk-sbom.cyclonedx.json > /dev/null
+
+      - name: Build flat staging tree
+        # Flatten to <abi>/libprovii_mobile_sdk_ffi.so + ProviiSDK.xcframework.zip so
+        # the per-file sign + attest loop is straightforward.
+        #
+        # Phase-3 SBOM addition: copy the workspace CycloneDX SBOM next to
+        # each artefact as <artefact>.cdx.json. The four per-artefact SBOM
+        # files are byte-identical (95% duplicate by design, as they are
+        # different ABIs of the same Cargo workspace, not different feature
+        # sets). Per-artefact siblings let R2 consumers fetch a single SBOM
+        # by path without cross-referencing a workspace-level location.
+        id: stage
+        run: |
+          set -euo pipefail
+          mkdir -p staging/android/arm64-v8a staging/android/armeabi-v7a staging/android/x86_64 staging/ios
+          cp artefacts/android/arm64-v8a/libprovii_mobile_sdk_ffi.so staging/android/arm64-v8a/
+          cp artefacts/android/armeabi-v7a/libprovii_mobile_sdk_ffi.so staging/android/armeabi-v7a/
+          cp artefacts/android/x86_64/libprovii_mobile_sdk_ffi.so staging/android/x86_64/
+          cp artefacts/ios/ProviiSDK.xcframework.zip staging/ios/
+          # SBOM siblings (workspace SBOM duplicated per artefact).
+          cp artefacts/provii-mobile-sdk-sbom.cyclonedx.json staging/android/arm64-v8a/libprovii_mobile_sdk_ffi.so.cdx.json
+          cp artefacts/provii-mobile-sdk-sbom.cyclonedx.json staging/android/armeabi-v7a/libprovii_mobile_sdk_ffi.so.cdx.json
+          cp artefacts/provii-mobile-sdk-sbom.cyclonedx.json staging/android/x86_64/libprovii_mobile_sdk_ffi.so.cdx.json
+          cp artefacts/provii-mobile-sdk-sbom.cyclonedx.json staging/ios/ProviiSDK.xcframework.zip.cdx.json
+          # Use a tmp listing then move into place so the file-list itself is
+          # never an entry in the listing it creates (find races bash redirect).
+          find staging -type f \( -name '*.so' -o -name '*.zip' \) | sort > /tmp/file-list.txt
+          mv /tmp/file-list.txt staging/file-list.txt
+          cat staging/file-list.txt
+          # Separate listing of CDX siblings; signing + upload loop below
+          # consumes both.
+          find staging -type f -name '*.cdx.json' | sort > /tmp/sbom-list.txt
+          mv /tmp/sbom-list.txt staging/sbom-list.txt
+          cat staging/sbom-list.txt
+
+      - name: Compute SHA-256 per file
+        run: |
+          set -euo pipefail
+          : > staging/digests.txt
+          while IFS= read -r f; do
+            d=$(sha256sum "$f" | awk '{print $1}')
+            echo "${f} ${d}" >> staging/digests.txt
+          done < staging/file-list.txt
+          cat staging/digests.txt
+
+      - name: Install Sigstore cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v2.5.3'
+
+      - name: Sign each artefact (Sigstore bundle, new format)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          while IFS= read -r f; do
+            cosign sign-blob --yes \
+              --new-bundle-format \
+              --bundle "${f}.sig" \
+              "${f}"
+            python3 -c "import json,sys; b=json.load(open('${f}.sig')); assert b.get('mediaType','').startswith('application/vnd.dev.sigstore.bundle'), b.get('mediaType')"
+          done < staging/file-list.txt
+
+      - name: Sign each CycloneDX SBOM (Sigstore bundle, new format)
+        # Phase-3 SBOM addition: same OIDC binding as the artefact .sig.
+        # cosign verify-blob with the same identity-regexp + issuer that
+        # validates <artefact>.sig must also validate <artefact>.cdx.json.sig.
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          while IFS= read -r sbom; do
+            cosign sign-blob --yes \
+              --new-bundle-format \
+              --bundle "${sbom}.sig" \
+              "${sbom}"
+            python3 -c "import json,sys; b=json.load(open('${sbom}.sig')); assert b.get('mediaType','').startswith('application/vnd.dev.sigstore.bundle'), b.get('mediaType')"
+          done < staging/sbom-list.txt
+
+      - name: Download SLSA generator DSSE envelope
+        # The slsa-framework/slsa-github-generator reusable workflow (the
+        # `provenance` job above) produces one DSSE envelope listing every
+        # subject we hashed in the package job (bundle tarball + per-ABI
+        # .so files + xcframework zip). slsa-verifier verify-artifact reads
+        # the envelope verbatim and matches the artefact's sha256 against
+        # any entry in the inner Statement's subject[] array, so the same
+        # envelope is correct for every per-artefact .intoto.jsonl in this
+        # job. The artefact name is exposed as `provenance-name` on the
+        # reusable workflow's outputs.
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.provenance.outputs.provenance-name }}
+          path: slsa/
+
+      - name: Fan SLSA generator DSSE envelope out to per-artefact .intoto.jsonl
+        # The SLSA generator's artefact is a Sigstore bundle:
+        #   {mediaType, verificationMaterial, dsseEnvelope}
+        # slsa-verifier verify-artifact accepts both the full Sigstore
+        # bundle and the bare DSSE envelope at --provenance-path; we ship
+        # the bare envelope (payload, payloadType, signatures) because that
+        # is the documented .intoto.jsonl shape and stays compatible with
+        # tooling that does not understand Sigstore bundles.
+        #
+        # The previous revision used actions/attest-build-provenance and
+        # unwrapped its dsseEnvelope.payload into the inner Statement,
+        # which (a) stripped the envelope and (b) used a Rekor v0.0.2 log
+        # entry that slsa-verifier rejects with "unexpected tlog entry
+        # type". Both failure modes are eliminated by sourcing the envelope
+        # from the SLSA reusable workflow instead. Per-artefact digest
+        # membership is validated before write so a malformed bundle fails
+        # fast.
+        run: |
+          set -euo pipefail
+          BUNDLE_FILE=$(find slsa -type f -name '*.intoto.jsonl' | head -n1)
+          if [ -z "${BUNDLE_FILE}" ] || [ ! -f "${BUNDLE_FILE}" ]; then
+            echo "::error::SLSA generator artifact missing (expected slsa/*.intoto.jsonl)"
+            ls -R slsa || true
+            exit 1
+          fi
+          BUNDLE_KEYS=$(jq -r 'keys | sort | join(",")' "${BUNDLE_FILE}")
+          case "${BUNDLE_KEYS}" in
+            dsseEnvelope,mediaType,verificationMaterial)
+              # SLSA generator v2.1.0 emits a Sigstore bundle.
+              ENVELOPE=$(jq -c '.dsseEnvelope' "${BUNDLE_FILE}")
+              ;;
+            payload,payloadType,signatures)
+              # Older generator output: bare DSSE envelope.
+              ENVELOPE=$(jq -c '.' "${BUNDLE_FILE}")
+              ;;
+            *)
+              echo "::error::unexpected SLSA artefact keys: ${BUNDLE_KEYS}"
+              exit 1
+              ;;
+          esac
+          ENVELOPE_PAYLOAD_TYPE=$(echo "${ENVELOPE}" | jq -r '.payloadType')
+          if [ "${ENVELOPE_PAYLOAD_TYPE}" != "application/vnd.in-toto+json" ]; then
+            echo "::error::unexpected payloadType: ${ENVELOPE_PAYLOAD_TYPE}"
+            exit 1
+          fi
+          STATEMENT=$(echo "${ENVELOPE}" | jq -r '.payload' | base64 -d)
+          PREDICATE_TYPE=$(echo "${STATEMENT}" | jq -r '.predicateType')
+          case "${PREDICATE_TYPE}" in
+            https://slsa.dev/provenance/*) ;;
+            *)
+              echo "::error::unexpected predicateType ${PREDICATE_TYPE}"
+              exit 1
+              ;;
+          esac
+          while IFS= read -r line; do
+            f=$(echo "${line}" | awk '{print $1}')
+            d=$(echo "${line}" | awk '{print $2}')
+            MATCH=$(echo "${STATEMENT}" | jq -r --arg digest "${d}" '[.subject[] | select(.digest.sha256 == $digest)] | length')
+            if [ "${MATCH}" = "0" ]; then
+              echo "::error::SLSA envelope does not list digest ${d} for ${f}"
+              exit 1
+            fi
+            # Write the DSSE envelope verbatim. slsa-verifier consumes this
+            # file as-is; do NOT unwrap to the inner Statement.
+            echo "${ENVELOPE}" > "${f}.intoto.jsonl"
+          done < staging/digests.txt
+          echo "First 200 chars of one envelope (sanity):"
+          head -c 200 "$(head -n1 staging/file-list.txt).intoto.jsonl"; echo
+
+      - name: Install Node.js
+        if: ${{ env.HAS_CF_TOKEN == 'true' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v4
+        with:
+          node-version: '22'
+
+      - name: Install Wrangler
+        if: ${{ env.HAS_CF_TOKEN == 'true' }}
+        run: npm install -g "wrangler@${WRANGLER_VERSION}" --ignore-scripts
+
+      - name: Upload triplets + SBOMs to R2 (wrangler)
+        if: ${{ env.HAS_CF_TOKEN == 'true' }}
+        # Phase-3 SBOM addition: each artefact now ships as a quintuplet on R2:
+        #   <artefact>              (binary)
+        #   <artefact>.sig          (cosign Sigstore bundle)
+        #   <artefact>.intoto.jsonl (SLSA in-toto JSONL)
+        #   <artefact>.cdx.json     (CycloneDX 1.6 SBOM)
+        #   <artefact>.cdx.json.sig (cosign Sigstore bundle for SBOM)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BASE_PREFIX: ${{ steps.ctx.outputs.base_prefix }}
+        run: |
+          set -euo pipefail
+          # Helper: derive R2 path from local staging path.
+          # staging/android/<abi>/libprovii_mobile_sdk_ffi.so -> <prefix>/android/<abi>/libprovii_mobile_sdk_ffi.so
+          # staging/ios/ProviiSDK.xcframework.zip      -> <prefix>/ios/ProviiSDK.xcframework.zip
+          while IFS= read -r f; do
+            REL="${f#staging/}"
+            CT_BIN="application/octet-stream"
+            case "${f}" in
+              *.zip) CT_BIN="application/zip" ;;
+            esac
+            wrangler r2 object put \
+              "${R2_BUCKET}/${BASE_PREFIX}/${REL}" \
+              --remote \
+              --file="${f}" \
+              --content-type="${CT_BIN}"
+            wrangler r2 object put \
+              "${R2_BUCKET}/${BASE_PREFIX}/${REL}.sig" \
+              --remote \
+              --file="${f}.sig" \
+              --content-type=application/vnd.dev.sigstore.bundle+json
+            wrangler r2 object put \
+              "${R2_BUCKET}/${BASE_PREFIX}/${REL}.intoto.jsonl" \
+              --remote \
+              --file="${f}.intoto.jsonl" \
+              --content-type=application/vnd.in-toto+json
+            wrangler r2 object put \
+              "${R2_BUCKET}/${BASE_PREFIX}/${REL}.cdx.json" \
+              --remote \
+              --file="${f}.cdx.json" \
+              --content-type=application/vnd.cyclonedx+json
+            wrangler r2 object put \
+              "${R2_BUCKET}/${BASE_PREFIX}/${REL}.cdx.json.sig" \
+              --remote \
+              --file="${f}.cdx.json.sig" \
+              --content-type=application/vnd.dev.sigstore.bundle+json
+          done < staging/file-list.txt
+
+      - name: Promote to <service>/latest/ (tag triggers only)
+        if: ${{ steps.ctx.outputs.promote_latest == 'true' && env.HAS_CF_TOKEN == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r f; do
+            REL="${f#staging/}"
+            CT_BIN="application/octet-stream"
+            case "${f}" in
+              *.zip) CT_BIN="application/zip" ;;
+            esac
+            # Phase-3 SBOM addition: also promote the .cdx.json + .cdx.json.sig
+            # siblings to latest/ so downstream consumers polling the latest
+            # prefix can verify "what is in it" without falling back to the
+            # versioned path.
+            for ext in "" ".sig" ".intoto.jsonl" ".cdx.json" ".cdx.json.sig"; do
+              case "${ext}" in
+                "")              CT="${CT_BIN}" ;;
+                ".sig")          CT="application/vnd.dev.sigstore.bundle+json" ;;
+                ".intoto.jsonl") CT="application/vnd.in-toto+json" ;;
+                ".cdx.json")     CT="application/vnd.cyclonedx+json" ;;
+                ".cdx.json.sig") CT="application/vnd.dev.sigstore.bundle+json" ;;
+              esac
+              wrangler r2 object put \
+                "${R2_BUCKET}/${SERVICE}/latest/${REL}${ext}" \
+                --remote \
+                --file="${f}${ext}" \
+                --content-type="${CT}"
+            done
+          done < staging/file-list.txt
+
+      - name: Upload CI artefacts (debug)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: r2-provenance-${{ github.sha }}
+          path: staging/
+          retention-days: 14

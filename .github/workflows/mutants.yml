@@ -1,0 +1,178 @@
+# Mutation Testing - provii-mobile-sdk
+# cargo-mutants for Rust workspace.
+# Weekly full run + PR-scoped incremental on source changes.
+# All actions SHA-pinned.
+
+name: Mutation Testing
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'  # Weekly on Monday at 5am UTC
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/*/src/**'
+      - 'mutants.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+jobs:
+  mutants:
+    name: Mutation Testing
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-mutants"
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked --version =27.0.0
+
+      - name: Determine mutant scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            CHANGED=$(git diff --name-only origin/main...HEAD -- \
+              'crates/*/src/**/*.rs' \
+              | tr '\n' ',' | sed 's/,$//')
+            if [[ -z "$CHANGED" ]]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "No mutatable source files changed"
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "files=$CHANGED" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "files=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run cargo-mutants (full)
+        if: steps.scope.outputs.skip != 'true' && steps.scope.outputs.files == ''
+        run: |
+          ec=0
+          cargo mutants \
+            --package provii-mobile-sdk-core \
+            --package provii-mobile-sdk-ffi \
+            --package provii-mobile-sdk-platform-storage \
+            -- --locked || ec=$?
+          # exit 2 = surviving mutants; the threshold gate below is authoritative.
+          # Any other non-zero code is a genuine build/baseline failure.
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 2 ]; then
+            echo "::error::cargo-mutants exited $ec (build or baseline failure, not a surviving mutant)"
+            exit "$ec"
+          fi
+
+      - name: Run cargo-mutants (incremental)
+        if: steps.scope.outputs.skip != 'true' && steps.scope.outputs.files != ''
+        env:
+          CHANGED_FILES: ${{ steps.scope.outputs.files }}
+        run: |
+          IFS=',' read -ra FILES <<< "${CHANGED_FILES}"
+          FILE_ARGS=""
+          for f in "${FILES[@]}"; do
+            FILE_ARGS="$FILE_ARGS --file $f"
+          done
+          if [[ -z "$FILE_ARGS" ]]; then
+            echo "No applicable files changed, skipping"
+            exit 0
+          fi
+          ec=0
+          cargo mutants \
+            --package provii-mobile-sdk-core \
+            --package provii-mobile-sdk-ffi \
+            --package provii-mobile-sdk-platform-storage \
+            $FILE_ARGS -- --locked || ec=$?
+          # exit 2 = surviving mutants; the threshold gate below is authoritative.
+          # Any other non-zero code is a genuine build/baseline failure.
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 2 ]; then
+            echo "::error::cargo-mutants exited $ec (build or baseline failure, not a surviving mutant)"
+            exit "$ec"
+          fi
+
+      - name: Check mutation score threshold
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          OUTCOMES="mutants.out/outcomes.json"
+          if [[ ! -f "$OUTCOMES" ]]; then
+            echo "No outcomes file found -- cargo-mutants may have found no mutants"
+            exit 0
+          fi
+
+          TOTAL=$(jq '[.outcomes[] | select(.scenario != "Baseline")] | length' "$OUTCOMES")
+          CAUGHT=$(jq '[.outcomes[] | select(.scenario != "Baseline") | select(.summary == "CaughtMutant")] | length' "$OUTCOMES")
+
+          if [[ "$TOTAL" -eq 0 ]]; then
+            echo "No mutants generated"
+            exit 0
+          fi
+
+          SCORE=$(echo "scale=1; $CAUGHT * 100 / $TOTAL" | bc)
+          echo "Mutation score: ${SCORE}% ($CAUGHT/$TOTAL mutants caught)"
+
+          # Break threshold: 70%
+          THRESHOLD=70
+          PASS=$(echo "$SCORE >= $THRESHOLD" | bc)
+          if [[ "$PASS" -ne 1 ]]; then
+            echo "::error::Mutation score ${SCORE}% is below threshold of ${THRESHOLD}%"
+            exit 1
+          fi
+
+      - name: Upload mutation report
+        if: always() && steps.scope.outputs.skip != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-report
+          path: mutants.out/
+          retention-days: 14

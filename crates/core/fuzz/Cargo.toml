@@ -1,0 +1,51 @@
+[package]
+name = "provii-mobile-sdk-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Prevent workspace interference
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+
+[dependencies.provii-mobile-sdk-core]
+path = ".."
+
+[[bin]]
+name = "fuzz_credential_json"
+path = "fuzz_targets/fuzz_credential_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_base64_utils"
+path = "fuzz_targets/fuzz_base64_utils.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_qr_parsing"
+path = "fuzz_targets/fuzz_qr_parsing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_date_parsing"
+path = "fuzz_targets/fuzz_date_parsing.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug-assertions = true
+overflow-checks = true

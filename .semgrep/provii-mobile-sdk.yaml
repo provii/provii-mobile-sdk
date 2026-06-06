@@ -1,0 +1,142 @@
+rules:
+
+  # ==========================================================================
+  # RULE 1: panic! / todo! / unimplemented! in library code
+  # ==========================================================================
+  # Explicit panic macros in non-test library code crash mobile apps and
+  # Workers. Return a Result with an appropriate error instead.
+  - id: provii.mobile-sdk.explicit-panic-in-lib
+    patterns:
+      - pattern-either:
+          - pattern: panic!(...)
+          - pattern: todo!(...)
+          - pattern: unimplemented!(...)
+      - pattern-not-inside: |
+          #[test]
+          fn $TEST_FN(...) { ... }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $M { ... }
+    paths:
+      exclude:
+        - "**/target/**"
+        - "**/benches/**"
+        - "**/tools/**"
+        - "**/examples/**"
+        - "**/fuzz/**"
+        - "**/tests/**"
+        - "**/*_tests.rs"
+    message: >
+      Explicit panic/todo/unimplemented in library code. This will crash
+      mobile apps at runtime. Return a Result with an appropriate error.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: correctness
+      subcategory: panic-safety
+      cwe: "CWE-248: Uncaught Exception"
+
+  # ==========================================================================
+  # RULE 2: Debug output in library code (non-test only)
+  # ==========================================================================
+  # println!, eprintln!, and dbg! in library code can leak state or
+  # credentials on mobile devices.
+  - id: provii.mobile-sdk.debug-output-in-lib
+    patterns:
+      - pattern-either:
+          - pattern: println!(...)
+          - pattern: eprintln!(...)
+          - pattern: dbg!(...)
+      - pattern-not-inside: |
+          #[test]
+          fn $TEST_FN(...) { ... }
+    paths:
+      exclude:
+        - "**/target/**"
+        - "**/benches/**"
+        - "**/tools/**"
+        - "**/examples/**"
+        - "**/fuzz/**"
+    message: >
+      Debug output (println/eprintln/dbg) in library code may leak
+      sensitive state on mobile devices. Remove or gate behind a feature flag.
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: security
+      subcategory: information-leak
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+
+  # ==========================================================================
+  # RULE 3: Non-constant-time equality on secret byte arrays
+  # ==========================================================================
+  # Direct == comparison on variables with secret/MAC/token/hmac in name.
+  - id: provii.mobile-sdk.non-ct-byte-comparison
+    pattern-regex: '(?:signature|hmac|mac_tag|token|secret|auth_tag)\w*\s*==\s*(?:signature|hmac|mac_tag|token|secret|auth_tag)'
+    paths:
+      exclude:
+        - "**/target/**"
+        - "**/tools/**"
+        - "**/examples/**"
+    message: >
+      Direct == comparison on values that appear to be secrets or MACs.
+      Use subtle::ConstantTimeEq (ct_eq) to prevent timing side-channels.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: security
+      subcategory: timing-attack
+      cwe: "CWE-208: Observable Timing Discrepancy"
+
+  # ==========================================================================
+  # RULE 4: Unsafe code blocks
+  # ==========================================================================
+  # Flag unsafe blocks in library code. provii-mobile-sdk should avoid
+  # unsafe except where FFI requires it (UniFFI-generated bindings and
+  # platform Keychain/Keystore wrappers).
+  - id: provii.mobile-sdk.unsafe-usage
+    patterns:
+      - pattern: unsafe { ... }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $M { ... }
+    paths:
+      exclude:
+        - "**/target/**"
+        - "**/benches/**"
+        - "**/tools/**"
+        - "**/examples/**"
+        - "**/uniffi/**"
+        - "**/store-ios/**"
+        - "**/tests/**"
+        - "**/*_tests.rs"
+    message: >
+      Unsafe code in provii-mobile-sdk requires explicit justification.
+      Add a SAFETY comment and suppress with nosemgrep if reviewed.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: security
+      subcategory: memory-safety
+      cwe: "CWE-119: Improper Restriction of Operations within Memory Buffer"
+
+  # ==========================================================================
+  # RULE 5: Hardcoded hex constants that might be key material
+  # ==========================================================================
+  - id: provii.mobile-sdk.hardcoded-key-candidate
+    pattern-regex: '(?:let|const|static)\s+\w*(?:key|secret|priv|sk|seed)\w*\s*(?::\s*\[[^\]]+\])?\s*=\s*\[0x[0-9a-fA-F]{2}(?:,\s*0x[0-9a-fA-F]{2}){15,}'
+    paths:
+      exclude:
+        - "**/target/**"
+        - "**/tools/**"
+        - "**/examples/**"
+    message: >
+      Possible hardcoded key material detected. Cryptographic keys and seeds
+      must not be hardcoded in source. Use secure storage or key derivation.
+      Suppress with nosemgrep if this is a generator point constant.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: security
+      subcategory: hardcoded-credentials
+      cwe: "CWE-798: Use of Hard-coded Credentials"
