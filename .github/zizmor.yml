@@ -1,0 +1,34 @@
+# Zizmor configuration for provii-mobile-sdk
+#
+# Documents legitimate dangerous-trigger sites that the audit flags as
+# high-severity but are required for the workflow to function.
+
+rules:
+  dangerous-triggers:
+    ignore:
+      - cla.yml
+      # pull_request_target is required because the CLA action commits
+      # signature records to signatures/cla.json on the base branch.
+      # Mitigations: event-type allowlist [opened, closed, synchronize],
+      # dependabot/renovate excluded by `if:` guard, no checkout of PR
+      # head ref, minimum-permission grants.
+
+  unpinned-uses:
+    # slsa-framework/slsa-github-generator MUST be referenced by tag
+    # per the SLSA spec. The generator validates its own ref at runtime
+    # and refuses to execute from a SHA pin.
+    ignore:
+      - release.yml
+
+  cache-poisoning:
+    # release.yml and sbom.yml are SHA-pinned, tag-triggered workflows
+    # that do not run on fork PRs.
+    ignore:
+      - release.yml
+      - sbom.yml
+
+  archived-uses:
+    # contributor-assistant/github-action is archived but still
+    # functional and SHA-pinned. No maintained alternative exists.
+    ignore:
+      - cla.yml

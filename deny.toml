@@ -1,0 +1,72 @@
+# cargo-deny configuration for provii-mobile-sdk
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "aarch64-linux-android",
+  "armv7-linux-androideabi",
+  "x86_64-linux-android",
+]
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+ignore = [
+  # core2 is unmaintained (all versions yanked) but pulled in transitively
+  # by multihash which has no updated release yet.
+  "RUSTSEC-2026-0105",
+  # rand unsoundness with custom logger via rand::rng(). We do not use
+  # custom loggers and the advisory only affects that specific pattern.
+  "RUSTSEC-2026-0097",
+  # proc-macro-error2 unmaintained (RUSTSEC-2026-0173); compile-time-only proc-macro
+  # helper pulled transitively; no runtime security impact. Expiry: 2026-09-01
+  "RUSTSEC-2026-0173",
+]
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "OpenSSL",
+  "Zlib",
+  "CC0-1.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "BSL-1.0",
+  "MPL-2.0",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[[licenses.clarify]]
+name = "webpki"
+expression = "ISC"
+license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/provii/provii-crypto"]
+
+[sources.allow-org]
+github = ["provii"]

@@ -1,0 +1,97 @@
+[package]
+name = "provii-mobile-sdk-ffi"
+description = "FFI bindings for Provii Mobile SDK - provides Kotlin and Swift interfaces via UniFFI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+name = "provii_mobile_sdk_ffi"
+
+[dependencies]
+# Core SDK - using workspace
+provii-mobile-sdk-core = { workspace = true }
+provii-crypto-commit = { workspace = true }
+provii-mobile-sdk-platform-storage = { workspace = true }
+
+# Platform-specific storage
+provii-mobile-sdk-store-android = { workspace = true, optional = true }
+provii-mobile-sdk-store-ios = { workspace = true, optional = true }
+
+# Using workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+  "rt",
+  "rt-multi-thread",
+  "net",
+  "io-util",
+  "fs",
+] }
+uniffi = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }
+once_cell = { workspace = true }
+log = { workspace = true }
+zeroize = { workspace = true }
+postcard = { workspace = true }
+fs2 = { version = "0.4", optional = true }
+quinn = { workspace = true }
+h3 = { workspace = true }
+h3-quinn = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
+http = { workspace = true }
+bytes = { workspace = true }
+url = { workspace = true }
+blake2 = "0.10"
+rand = "0.8"
+rayon = { workspace = true, optional = true }
+
+# HTTP/2 client dependencies
+hyper-util = { version = "0.1.7", features = [
+  "client-legacy",
+  "http2",
+], optional = true }
+hyper-rustls = { version = "0.27", features = [
+  "http2",
+  "webpki-roots",
+  "aws-lc-rs",
+], optional = true }
+http-body-util = { version = "0.1.2", optional = true }
+
+# Android-specific
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+android_logger = "0.14"
+provii-mobile-sdk-store-android = { workspace = true }
+rayon = { workspace = true }                           # Always include Rayon on Android
+
+# iOS-specific
+[target.'cfg(target_os = "ios")'.dependencies]
+provii-mobile-sdk-store-ios = { workspace = true }
+rayon = { workspace = true }                       # Always include Rayon on iOS
+
+[features]
+default = ["parallel", "http"]
+http = ["hyper-util", "hyper-rustls", "http-body-util"]
+parallel = ["provii-mobile-sdk-core/parallel", "rayon"]
+mmap = ["provii-mobile-sdk-core/mmap"]
+android = ["provii-mobile-sdk-store-android", "parallel"]
+ios = ["provii-mobile-sdk-store-ios", "parallel"]
+development = []
+debug-threading = ["provii-mobile-sdk-core/debug-threading"]
+
+[lints]
+workspace = true
+
+[build-dependencies]
+uniffi = { workspace = true }
+[dev-dependencies]
+tempfile = "3.10"

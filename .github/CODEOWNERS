@@ -1,0 +1,18 @@
+# Default owners for everything in the repo
+* @tim-maelstrom
+
+# Core cryptographic code requires careful review
+/crates/core/ @tim-maelstrom
+
+# FFI layer - security sensitive
+/crates/ffi/ @tim-maelstrom
+
+# Platform storage - security sensitive
+/crates/store-ios/ @tim-maelstrom
+/crates/store-android/ @tim-maelstrom
+
+# CI/CD workflows
+/.github/workflows/ @tim-maelstrom
+
+# Security-related files
+/SECURITY.md @tim-maelstrom

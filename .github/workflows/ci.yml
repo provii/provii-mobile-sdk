@@ -1,0 +1,711 @@
+name: CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.gitignore'
+      - 'CHANGELOG*'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.gitignore'
+      - 'CHANGELOG*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# WS-032: provii-crypto is now a PUBLIC repo. The default GITHUB_TOKEN
+# suffices for cloning it via HTTPS. No org PAT required.
+
+jobs:
+  format:
+    name: Check Formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt -p provii-mobile-sdk-core -p provii-mobile-sdk-platform-storage -p provii-mobile-sdk-store-ios -p provii-mobile-sdk-store-android -p provii-mobile-sdk-ffi --check
+
+      - name: Check TOML formatting
+        run: |
+          cargo install taplo-cli --locked --version =0.9.3
+          taplo fmt --check
+
+  clippy:
+    name: Clippy Lints
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-clippy"
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+
+      - name: Check for unused dependencies
+        run: |
+          cargo install cargo-machete --locked --version =0.7.0
+          cargo machete
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-test"
+
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
+  test-coverage:
+    name: Test Coverage
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-coverage"
+
+      - name: Install cargo-llvm-cov
+        run: which cargo-llvm-cov || cargo install cargo-llvm-cov --locked --version =0.6.16
+
+      - name: Generate coverage report
+        run: cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info
+
+      - name: Check coverage threshold
+        run: |
+          LINES_FOUND=$(grep "^LF:" lcov.info | cut -d: -f2 | paste -sd+ | bc)
+          LINES_HIT=$(grep "^LH:" lcov.info | cut -d: -f2 | paste -sd+ | bc)
+          if [ "$LINES_FOUND" -eq 0 ]; then
+            COVERAGE="0"
+          else
+            COVERAGE=$(echo "scale=2; $LINES_HIT * 100 / $LINES_FOUND" | bc)
+          fi
+          echo "Coverage: ${COVERAGE}% (${LINES_HIT}/${LINES_FOUND} lines)"
+          echo "## Test Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "Line coverage: **${COVERAGE}%** (${LINES_HIT}/${LINES_FOUND} lines)" >> $GITHUB_STEP_SUMMARY
+
+          THRESHOLD=85
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+            echo "Status: Below ${THRESHOLD}% threshold" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "Coverage ${COVERAGE}% meets threshold of ${THRESHOLD}%"
+            echo "Status: Meets ${THRESHOLD}% threshold" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  mutation:
+    name: Mutation Testing
+    needs: test
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-mutation"
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked --version =27.0.0
+
+      - name: Restore mutation cache (PR only)
+        # Only restore prior outcomes for PRs, where --iterate gives fast
+        # incremental feedback. On main pushes the full mutant set runs so
+        # that outcomes.json is complete and the 70% gate scores correctly.
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: mutants.out
+          key: mutants-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            mutants-${{ runner.os }}-
+
+      - name: Clear stale mutation output (non-PR)
+        if: github.event_name != 'pull_request'
+        run: rm -rf mutants.out
+
+      - name: Run mutation tests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          ec=0
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git diff origin/main...HEAD > /tmp/pr.diff
+            cargo mutants -p provii-mobile-sdk-core --timeout 120 --jobs 2 --iterate --in-diff /tmp/pr.diff || ec=$?
+          else
+            # Full run on main: no --iterate, no prior cache. outcomes.json
+            # will contain every mutant so the score gate sees the true
+            # cumulative result, not just an incremental delta.
+            cargo mutants -p provii-mobile-sdk-core --timeout 120 --jobs 2 || ec=$?
+          fi
+          # cargo-mutants exit 0 = every viable mutant caught; exit 2 = some viable
+          # mutants survived. The 70% threshold gate in the next step is authoritative
+          # for survivors, so exit 2 is not a job failure here. Any other code
+          # (1 usage, 4 baseline tests failed, etc.) is a genuine failure and stops the job.
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 2 ]; then
+            echo "::error::cargo-mutants exited $ec (build or baseline failure, not a surviving mutant)"
+            exit "$ec"
+          fi
+
+      - name: Check mutation score
+        if: always()
+        run: |
+          if [ ! -f mutants.out/outcomes.json ]; then
+            echo "No mutation outcomes found"
+            exit 0
+          fi
+
+          SCORE=$(python3 -c "
+          import json
+          data = json.load(open('mutants.out/outcomes.json'))
+          caught = sum(1 for o in data.get('outcomes', []) if o.get('summary') == 'CaughtMutant')
+          missed = sum(1 for o in data.get('outcomes', []) if o.get('summary') == 'MissedMutant')
+          viable = caught + missed
+          score = (100 * caught / viable) if viable > 0 else 0
+          print(f'{score:.1f}')
+          ")
+
+          CAUGHT=$(python3 -c "
+          import json
+          data = json.load(open('mutants.out/outcomes.json'))
+          print(sum(1 for o in data.get('outcomes', []) if o.get('summary') == 'CaughtMutant'))
+          ")
+          MISSED=$(python3 -c "
+          import json
+          data = json.load(open('mutants.out/outcomes.json'))
+          print(sum(1 for o in data.get('outcomes', []) if o.get('summary') == 'MissedMutant'))
+          ")
+
+          echo "## Mutation Testing" >> $GITHUB_STEP_SUMMARY
+          echo "Score: **${SCORE}%** (${CAUGHT} caught, ${MISSED} missed)" >> $GITHUB_STEP_SUMMARY
+
+          THRESHOLD=70
+          if (( $(echo "$SCORE < $THRESHOLD" | bc -l) )); then
+            echo "::error::Mutation score ${SCORE}% is below threshold of ${THRESHOLD}%"
+            echo "Status: Below ${THRESHOLD}% threshold" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "Mutation score ${SCORE}% meets threshold of ${THRESHOLD}%"
+            echo "Status: Meets ${THRESHOLD}% threshold" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-report
+          path: |
+            mutants.out/missed.txt
+            mutants.out/caught.txt
+            mutants.out/outcomes.json
+
+  # ======================================================================
+  # Miri (Undefined Behaviour Detection)
+  #
+  # Miri interprets every instruction, so it is 100-1000x slower than
+  # native test execution. The full test suite for provii-mobile-sdk-core
+  # includes Groth16 proof generation, proptest campaigns, and Rayon
+  # thread-pool tests that take hours under Miri. Neither the crypto deps
+  # (bellman, bls12_381, jubjub) nor the SDK itself use blst or C/asm,
+  # so Miri CAN compile and run everything. It just cannot finish in any
+  # reasonable CI budget.
+  #
+  # Scope: we run Miri on the subsets that (a) complete in <35 minutes
+  # and (b) cover the highest-value UB surface:
+  #
+  #   1. provii-mobile-sdk-platform-storage  (~85 tests, skipping 5
+  #      thread-spawning and iteration-heavy tests)
+  #      Secure storage trait, SecureStore wrapper, key validation,
+  #      JSON/postcard serialisation, biometric requirement types.
+  #
+  #   2. provii-mobile-sdk-core error::tests  (59 tests)
+  #      Error type construction, Display impls, From conversions,
+  #      ErrorContext chaining. No crypto, no I/O, no threads.
+  #
+  # Excluded from Miri (covered by native unit tests + cargo-mutants):
+  #   - prover, issuance, blind_issuance: Groth16 proof generation and
+  #     Pedersen commitment arithmetic are computationally infeasible
+  #     under Miri's interpreter (~hours per test).
+  #   - credential, utils, types, storage: proptest campaigns generate
+  #     thousands of cases, pushing Miri well past the timeout.
+  #   - parallel: Rayon thread-pool tests are extremely slow under Miri.
+  #
+  # The crypto libraries themselves (provii-crypto) have their own Miri
+  # CI in the provii-crypto repo.
+  # ======================================================================
+  miri:
+    name: Miri (Undefined Behavior Detection)
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: nightly
+          components: miri
+
+      - name: Setup Miri
+        run: cargo miri setup
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-miri"
+
+      - name: Run Miri (platform-storage)
+        # Exclude thread-spawning concurrency tests (4 tests) and the
+        # 100-iteration store/retrieve/delete cycle. Miri interprets
+        # every thread-scheduler decision, making spawn-heavy tests
+        # 1000x+ slower than single-threaded equivalents. The excluded
+        # tests are covered by native unit tests and cargo-mutants.
+        run: |
+          cargo miri test -p provii-mobile-sdk-platform-storage -- \
+            --skip concurrent \
+            --skip test_store_retrieve_delete_cycle
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+      - name: Run Miri (core error module)
+        run: cargo miri test -p provii-mobile-sdk-core error::tests
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-docs"
+
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  build-android-smoke:
+    name: Android Build (Smoke Test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked --version =4.1.2
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
+        with:
+          ndk-version: r26d
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-android-smoke"
+
+      - name: Build for Android (arm64)
+        run: |
+          cargo ndk --target aarch64-linux-android --platform 24 -- \
+            build --package provii-mobile-sdk-ffi --release --locked \
+            --features "android,parallel,debug-threading,http"
+
+  build-ios-smoke:
+    name: iOS Build (Smoke Test)
+    if: github.actor != 'dependabot[bot]'
+    # COST: macOS runner required. cargo build --target aarch64-apple-ios
+    # needs Apple SDK and linker. 10x Linux cost; skipped for Dependabot.
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure git for private dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git config --local url."https://x-access-token:${GH_TOKEN}@github.com/provii/".insteadOf "https://github.com/provii/"
+
+      - name: Clone provii-crypto
+        # WS-021: Clone at tag then verify SHA to detect tag mutation.
+        # Update both the tag and the expected SHA when bumping provii-crypto.
+        run: |
+          git clone --depth 1 --branch v0.1.0 https://github.com/provii/provii-crypto.git ../provii-crypto
+          cd ../provii-crypto
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="2ee4691cff450979f9e0d01bc561bd5ff59f5bd9"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::provii-crypto tag v0.1.0 resolved to ${ACTUAL_SHA}, expected ${EXPECTED_SHA}"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-ios-smoke"
+
+      - name: Build for iOS (device)
+        run: |
+          cargo build --package provii-mobile-sdk-ffi --release --locked \
+            --target aarch64-apple-ios \
+            --features "ios,parallel,debug-threading,http"
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "17.6"
+
+  # ======================================================================
+  # Sentinel, single required check for branch protection
+  #
+  # ADV-WS-01-05: ci-success cannot depend on the security-audit workflow
+  # (security-audit.yml) because GitHub Actions does not support
+  # cross-workflow job dependencies. Branch protection MUST require BOTH
+  # "CI Success" (this gate) AND "Security Summary" (from
+  # security-audit.yml) as required status checks. If only ci-success is
+  # required, PRs can merge without passing the security audit. Verify
+  # this in Settings > Branches > Branch protection rules.
+  # ======================================================================
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [format, clippy, test, test-coverage, mutation, miri, docs, build-android-smoke, build-ios-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check all jobs passed
+        if: >-
+          contains(needs.format.result, 'failure')
+          || contains(needs.clippy.result, 'failure')
+          || contains(needs.test.result, 'failure')
+          || contains(needs.test-coverage.result, 'failure')
+          || contains(needs.docs.result, 'failure')
+          || contains(needs.build-android-smoke.result, 'failure')
+          || contains(needs.build-ios-smoke.result, 'failure')
+          || contains(needs.mutation.result, 'failure')
+          || contains(needs.miri.result, 'failure')
+          || contains(needs.mutation.result, 'cancelled')
+          || contains(needs.miri.result, 'cancelled')
+          || contains(needs.format.result, 'cancelled')
+          || contains(needs.clippy.result, 'cancelled')
+          || contains(needs.test.result, 'cancelled')
+          || contains(needs.test-coverage.result, 'cancelled')
+          || contains(needs.docs.result, 'cancelled')
+          || contains(needs.build-android-smoke.result, 'cancelled')
+          || contains(needs.build-ios-smoke.result, 'cancelled')
+        env:
+          RESULT_FORMAT: ${{ needs.format.result }}
+          RESULT_CLIPPY: ${{ needs.clippy.result }}
+          RESULT_TEST: ${{ needs.test.result }}
+          RESULT_COVERAGE: ${{ needs.test-coverage.result }}
+          RESULT_MUTATION: ${{ needs.mutation.result }}
+          RESULT_MIRI: ${{ needs.miri.result }}
+          RESULT_DOCS: ${{ needs.docs.result }}
+          RESULT_ANDROID: ${{ needs.build-android-smoke.result }}
+          RESULT_IOS: ${{ needs.build-ios-smoke.result }}
+        run: |
+          echo "One or more required CI jobs did not succeed"
+          echo "format=${RESULT_FORMAT}"
+          echo "clippy=${RESULT_CLIPPY}"
+          echo "test=${RESULT_TEST}"
+          echo "test-coverage=${RESULT_COVERAGE}"
+          echo "mutation=${RESULT_MUTATION}"
+          echo "miri=${RESULT_MIRI}"
+          echo "docs=${RESULT_DOCS}"
+          echo "android=${RESULT_ANDROID}"
+          echo "ios=${RESULT_IOS}"
+          exit 1
+
+      - name: All checks passed
+        run: echo "All required CI jobs passed"

@@ -1,0 +1,79 @@
+[package]
+name = "provii-mobile-sdk-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Pure-Rust core library for the Provii mobile wallet with Groth16 proofs."
+
+[dependencies]
+# Core crypto dependencies - using workspace paths
+provii-crypto-commons = { workspace = true }
+provii-crypto-commit = { workspace = true }
+provii-crypto-prover = { workspace = true }
+provii-crypto-circuit-age = { workspace = true }
+provii-crypto-sig-redjubjub = { workspace = true }
+provii-crypto-public-inputs = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+base64 = { workspace = true }
+hex = { workspace = true }
+once_cell = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+rand = { version = "0.8", default-features = false, features = ["std"] }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+blake2 = { version = "0.10", default-features = false }
+blake3 = { version = "1.5", default-features = false }
+zeroize = { workspace = true }
+subtle = { workspace = true }
+postcard = { workspace = true }
+memmap2 = { version = "0.9", optional = true }
+url = { workspace = true }
+ff = "0.13"
+
+# Optional dependencies
+log = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+rayon = { workspace = true, optional = true }
+
+# BLS12-381 and bellman for Groth16 - CRITICAL: Enable multicore feature
+bls12_381 = { version = "0.8", default-features = false }
+bellman = { version = "0.14", default-features = false, features = [
+  "groth16",
+  "multicore",
+] }
+
+[features]
+default = ["std", "logging", "parallel", "debug-threading"]
+std = ["blake3/std"]
+
+# Enable parallel proving with smart thread pool control
+parallel = ["rayon", "std"]
+async = ["tokio"]
+# Note: "http" feature is intentionally NOT defined - network/async_flow modules
+# use cfg(feature = "http") to remain dormant until crate::net is implemented
+logging = ["log"]
+mmap = ["memmap2"]
+debug-crypto = []
+debug-threading = []
+debug-witness = []
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serial_test = "3"
+rand = { version = "0.8", features = ["std"] }
+hex = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+proptest = "1.4"
+ed25519-dalek = "2.2"

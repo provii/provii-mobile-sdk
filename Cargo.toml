@@ -1,0 +1,107 @@
+[workspace]
+resolver = "2"
+
+members = [
+  "crates/core",
+  "crates/platform-storage",
+  "crates/store-ios",
+  "crates/store-android",
+  "crates/ffi",
+]
+
+exclude = ["crates/core/fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/provii/provii-mobile-sdk"
+
+[workspace.dependencies]
+# Cross-crate tooling
+uniffi = { version = "0.29", features = ["cli"] }
+uniffi_build = { version = "0.29", features = ["build"] }
+
+tokio = { version = "1.38", features = [
+  "rt",
+  "macros",
+  "time",
+  "rt-multi-thread",
+] }
+
+# Common utility crates
+once_cell = "1.19"
+thiserror = "1.0"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+hex = "0.4"
+base64 = "0.22"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+zeroize = { version = "1.8", features = ["derive"] }
+subtle = "2.6"
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+quinn = { version = "0.11.8", default-features = false, features = [
+  "rustls-aws-lc-rs",
+  "runtime-tokio",
+] }
+h3 = "=0.0.8"
+h3-quinn = "=0.0.10"
+rustls = { version = "0.23", default-features = false, features = [
+  "aws_lc_rs",
+] }
+webpki-roots = "0.26"
+http = "1.3.1"
+bytes = "1.10.1"
+url = "2.5"
+
+# Thread pool management for safe parallel proving
+rayon = "1.11"
+
+# Provii crypto dependencies
+provii-crypto-commons = { git = "https://github.com/provii/provii-crypto.git", tag = "v0.1.0" }
+provii-crypto-commit = { git = "https://github.com/provii/provii-crypto.git", tag = "v0.1.0" }
+provii-crypto-prover = { git = "https://github.com/provii/provii-crypto.git", tag = "v0.1.0" }
+provii-crypto-protocol = { git = "https://github.com/provii/provii-crypto.git", tag = "v0.1.0" }
+provii-crypto-circuit-age = { git = "https://github.com/provii/provii-crypto.git", tag = "v0.1.0" }
+provii-crypto-public-inputs = { git = "https://github.com/provii/provii-crypto.git", tag = "v0.1.0" }
+provii-crypto-sig-redjubjub = { git = "https://github.com/provii/provii-crypto.git", tag = "v0.1.0" }
+
+# Internal crates
+provii-mobile-sdk-core = { path = "crates/core" }
+provii-mobile-sdk-platform-storage = { path = "crates/platform-storage" }
+provii-mobile-sdk-store-android = { path = "crates/store-android" }
+provii-mobile-sdk-store-ios = { path = "crates/store-ios" }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+arithmetic_side_effects = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+too_many_arguments = "allow"
+
+# Release profile optimization for mobile
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"       # Important for FFI safety - allows catch_unwind to work
+strip = false          # Keep symbols for better crash reports
+debug = 1              # Minimal debug info for stack traces
+overflow-checks = true

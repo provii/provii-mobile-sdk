@@ -1,0 +1,38 @@
+# Gitleaks configuration for provii-mobile-sdk
+# https://github.com/gitleaks/gitleaks
+
+title = "provii-mobile-sdk gitleaks config"
+
+[extend]
+# Use default gitleaks rules
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and constants that resemble secrets but are not"
+
+# Test modules across the workspace use literal string keys as cache keys,
+# keychain account names, and storage identifiers. These are NOT credentials.
+# `let key = "test_key"` patterns inside `#[cfg(test)]` blocks are common.
+paths = [
+  '''crates/store-ios/src/lib\.rs''',
+  '''crates/store-android/src/lib\.rs''',
+  '''crates/.*/tests/.*\.rs$''',
+  '''crates/.*/benches/.*\.rs$''',
+]
+
+# Specific known false positives in source. Listed verbatim so a reviewer can
+# grep for each one and confirm it against the source.
+stopwords = [
+  "test_key",
+  "cache_test",
+  "update_test",
+  "rotation_test",
+  "metrics_test",
+  "binary_test",
+  "json_test",
+  "large_data_test",
+  "nonexistent_key_12345",
+  "nonexistent_delete",
+  "secret_val_123",
+  "verifier_val_456",
+]
