@@ -2100,7 +2100,7 @@ dependencies = [
 name = "provii-mobile-sdk-store-ios"
 version = "0.1.0"
 dependencies = [
- "core-foundation 0.9.4",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
  "log",
  "provii-mobile-sdk-platform-storage",

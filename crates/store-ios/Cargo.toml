@@ -14,7 +14,7 @@ zeroize = { workspace = true }
 
 # iOS-only system bindings
 [target.'cfg(target_os = "ios")'.dependencies]
-core-foundation = { version = "0.9" }
+core-foundation = { version = "0.10" }
 core-foundation-sys = { version = "0.8" }
 security-framework = { version = "2.9" }
 security-framework-sys = { version = "2.9" }
