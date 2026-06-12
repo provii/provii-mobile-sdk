@@ -36,7 +36,7 @@ subtle = { workspace = true }
 postcard = { workspace = true }
 memmap2 = { version = "0.9", optional = true }
 url = { workspace = true }
-ff = "0.13"
+ff = "0.14"
 
 # Optional dependencies
 log = { workspace = true, optional = true }

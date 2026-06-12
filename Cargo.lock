@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "addchain"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5665045de74fda906c0abfaec40cf2551f88c34dccea869f3fe950dde7209764"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -207,7 +218,7 @@ dependencies = [
  "blake2s_simd",
  "byteorder",
  "crossbeam-channel",
- "ff",
+ "ff 0.13.1",
  "group",
  "lazy_static",
  "log",
@@ -311,7 +322,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7bc6d6292be3a19e6379786dac800f551e5865a5bb51ebbe3064ab80433f403"
 dependencies = [
- "ff",
+ "ff 0.13.1",
  "group",
  "pairing",
  "rand_core 0.6.4",
@@ -799,6 +810,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ff"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1f686ab92a9fb0eaf188f6c6c87b89490baa6fdb0db4544ba4dc47f7942489f"
+dependencies = [
+ "bitvec",
+ "ff_derive",
+ "rand_core 0.10.1",
+ "subtle",
+]
+
+[[package]]
+name = "ff_derive"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "241afe8c15ffa21933eaefe8a563af36fd9fc98a3e8a044e8f7db52eb1fae3d8"
+dependencies = [
+ "addchain",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1049,7 +1087,7 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
- "ff",
+ "ff 0.13.1",
  "memuse",
  "rand_core 0.6.4",
  "subtle",
@@ -1475,7 +1513,7 @@ checksum = "8499f7a74008aafbecb2a2e608a3e13e4dd3e84df198b604451efe93f2de6e61"
 dependencies = [
  "bitvec",
  "bls12_381",
- "ff",
+ "ff 0.13.1",
  "group",
  "rand_core 0.6.4",
  "subtle",
@@ -1738,7 +1776,7 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3e57598f73cc7e1b2ac63c79c517b31a0877cd7c402cdcaa311b5208de7a095"
 dependencies = [
- "ff",
+ "ff 0.13.1",
  "group",
  "rand 0.8.5",
  "static_assertions",
@@ -1891,7 +1929,7 @@ dependencies = [
  "bellman",
  "blake2",
  "bls12_381",
- "ff",
+ "ff 0.13.1",
  "group",
  "hex",
  "jubjub",
@@ -1943,7 +1981,7 @@ dependencies = [
  "bellman",
  "blake2",
  "bls12_381",
- "ff",
+ "ff 0.13.1",
  "hex",
  "lazy_static",
  "log",
@@ -1963,7 +2001,7 @@ source = "git+https://github.com/provii/provii-crypto.git?tag=v0.1.0#2ee4691cff4
 dependencies = [
  "bellman",
  "bls12_381",
- "ff",
+ "ff 0.13.1",
  "provii-crypto-commons",
  "thiserror 2.0.18",
 ]
@@ -1975,7 +2013,7 @@ source = "git+https://github.com/provii/provii-crypto.git?tag=v0.1.0#2ee4691cff4
 dependencies = [
  "blake2",
  "blake2s_simd",
- "ff",
+ "ff 0.13.1",
  "group",
  "hex",
  "jubjub",
@@ -1998,7 +2036,7 @@ dependencies = [
  "bls12_381",
  "chrono",
  "ed25519-dalek",
- "ff",
+ "ff 0.14.0",
  "hex",
  "log",
  "memmap2",
@@ -2259,6 +2297,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
 name = "rand_xorshift"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2493,7 +2537,7 @@ dependencies = [
  "bls12_381",
  "corez",
  "document-features",
- "ff",
+ "ff 0.13.1",
  "fpe",
  "getset",
  "group",
