@@ -588,7 +588,7 @@ jobs:
 
       - name: Build for Android (arm64)
         run: |
-          cargo ndk --target aarch64-linux-android --platform 24 -- \
+          cargo ndk --target aarch64-linux-android --platform 29 -- \
             build --package provii-mobile-sdk-ffi --release --locked \
             --features "android,parallel,debug-threading,http"
 

@@ -142,7 +142,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
         run: |
-          cargo ndk --target "${BUILD_TARGET}" --platform 24 -- \
+          cargo ndk --target "${BUILD_TARGET}" --platform 29 -- \
             build --package provii-mobile-sdk-ffi --release --locked \
             --features "android,parallel,http"
 
