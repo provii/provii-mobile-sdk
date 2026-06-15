@@ -19,7 +19,7 @@ zeroize = { workspace = true }
 jni = { version = "0.21", default-features = false }
 ndk-sys = { version = "0.5", default-features = false }
 ndk-context = { version = "0.1", default-features = false }
-ndk = "0.8"
+ndk = "0.9"
 android_logger = "0.14"
 rayon.workspace = true
 [features]
