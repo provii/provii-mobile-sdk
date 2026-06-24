@@ -8,6 +8,7 @@ use super::*;
 use crate::qr::{
     extract_challenge_id_from_qr, parse_qr_code, validate_challenge_id_format, validate_qr_payload,
 };
+use crate::tokio_rt;
 #[cfg(feature = "http")]
 use zeroize::Zeroize;
 

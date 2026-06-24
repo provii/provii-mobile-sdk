@@ -5,6 +5,7 @@
 //! [`ProviiWallet`].
 
 use super::*;
+use crate::tokio_rt;
 use provii_mobile_sdk_core::prover::{build_verify_request, pedersen_commit_dob_validated};
 #[cfg(feature = "http")]
 use provii_mobile_sdk_core::types::SubmitProofRequest;
