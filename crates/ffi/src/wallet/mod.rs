@@ -31,6 +31,7 @@ use provii_mobile_sdk_core::types::{IssuerTrustAnchor, QrChallengePayload};
 // shared FFI types into scope with `use super::*`. `pub(crate)` keeps them
 // crate-internal and avoids unused-import warnings in this module.
 pub(crate) use crate::errors::*;
+pub(crate) use crate::progress::{ProgressStage, ProgressTracker};
 pub(crate) use crate::state::*;
 pub(crate) use crate::types::*;
 
