@@ -146,7 +146,7 @@ pub struct ProvingKeyManager {
     /// Root directory for PK storage (the platform's app-files dir).
     storage_dir: PathBuf,
 
-    /// Filename derived from the verifying key ID, e.g. `age_pk.2031517468.bin`.
+    /// Filename derived from the verifying key ID, e.g. `age_pk.914153247.bin`.
     pk_filename: String,
 
     /// Verifying key ID that this PK corresponds to.
@@ -156,10 +156,10 @@ pub struct ProvingKeyManager {
 
 impl ProvingKeyManager {
     /// The verifying key ID embedded in the current circuit parameters.
-    const VK_ID: u32 = 2031517468;
+    const VK_ID: u32 = 914153247;
 
     /// CDN URL for the proving key binary.
-    const PK_URL: &'static str = "https://cdn.provii.app/age_pk.2031517468.bin";
+    const PK_URL: &'static str = "https://cdn.provii.app/age_pk.914153247.bin";
 
     /// Expected byte length of a valid proving key file.
     const PK_SIZE: u64 = 51_945_624;
@@ -1073,7 +1073,7 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(ProvingKeyManager::VK_ID, 2031517468);
+        assert_eq!(ProvingKeyManager::VK_ID, 914153247);
         assert_eq!(ProvingKeyManager::PK_SIZE, 51_945_624);
         assert_eq!(ProvingKeyManager::MIN_FREE_SPACE, 65_000_000);
         assert_eq!(ProvingKeyManager::PK_BLAKE2S.len(), 64);
