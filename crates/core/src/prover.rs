@@ -231,13 +231,36 @@ pub struct PreflightReport {
     pub public_inputs_hex: Vec<String>,
 }
 
+/// Domain separator for the Groth16 verifying-key identifier, per the Provii
+/// protocol spec (Section 13.7, `VK_ID_DST`).
+///
+/// The deployed `age_vk.914153247.bin` hashes to `vk_id` 914153247 under this DST.
+/// Both the wallet and the verifier compute the id independently, so any drift
+/// here makes every wallet proof fail the verifier's `vk_id` gate
+/// (`VkIdMismatch`). It MUST stay byte-equal to provii-crypto's `gen_params.rs`
+/// / `check_key.rs` `compute_vk_id`. (Pre-rebrand this was the `zerokp.vk.id.v1`
+/// codename; the rebrand to `provii.vk.id.v0` was not propagated here.)
+// SECURITY: This domain separator prevents collisions with other Blake2s usages
+// in the protocol (e.g. RP challenge hashing).
+const VK_ID_DST: &[u8] = b"provii.vk.id.v0";
+
+/// Hash a serialised verifying key under [`VK_ID_DST`] and take the first 4 bytes
+/// as a little-endian `u32`. Split out from [`compute_vk_id`] so the domain
+/// separator can be regression-tested without constructing Groth16 parameters.
+fn vk_id_from_vk_bytes(vk_bytes: &[u8]) -> u32 {
+    let mut h = Blake2s256::new();
+    h.update(VK_ID_DST);
+    h.update(vk_bytes);
+    let digest: [u8; 32] = h.finalize().into();
+
+    u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]])
+}
+
 /// Derive a 4-byte verifying key identifier from Groth16 parameters.
 ///
-/// The identifier is `Blake2s-256(b"zerokp.vk.id.v1" || serialised_vk)` truncated to
-/// the first 4 bytes, interpreted as a little-endian `u32`. Both the wallet and the
+/// The identifier is `Blake2s-256(VK_ID_DST || serialised_vk)` truncated to the
+/// first 4 bytes, interpreted as a little-endian `u32`. Both the wallet and the
 /// verifier compute this independently so they can detect key mismatches cheaply.
-// SECURITY: The domain separator "zerokp.vk.id.v1" prevents collisions with other
-// Blake2s usages in the protocol (e.g. RP challenge hashing).
 fn compute_vk_id(params: &Parameters<Bls12>) -> u32 {
     let mut vk_bytes = Vec::new();
     // SAFETY: write() into an in-memory Vec<u8> cannot produce an I/O error.
@@ -249,12 +272,7 @@ fn compute_vk_id(params: &Parameters<Bls12>) -> u32 {
             .expect("VK serialisation cannot fail on an in-memory Vec");
     }
 
-    let mut h = Blake2s256::new();
-    h.update(b"zerokp.vk.id.v1");
-    h.update(&vk_bytes);
-    let digest: [u8; 32] = h.finalize().into();
-
-    u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]])
+    vk_id_from_vk_bytes(&vk_bytes)
 }
 
 /// Build a diagnostic [`PreflightReport`] for the given credential and challenge.

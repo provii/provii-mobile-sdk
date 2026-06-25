@@ -605,3 +605,23 @@ fn init_prover_with_pk_mmap_rejects_invalid_path() {
         ProverError::InvalidProvingKey
     ));
 }
+
+/// Regression guard for the verifying-key-id domain separator.
+///
+/// Protocol spec Section 13.7 pins `VK_ID_DST = "provii.vk.id.v0"`; the deployed
+/// `age_vk.914153247.bin` hashes to `vk_id` 914153247 under it. A regression to
+/// the pre-rebrand `zerokp.vk.id.v1` (or any other DST) makes every wallet proof
+/// fail the verifier's `vk_id` gate, and nothing else in CI catches it.
+#[test]
+fn vk_id_dst_is_canonical_provii_v0() {
+    assert_eq!(
+        VK_ID_DST, b"provii.vk.id.v0",
+        "VK_ID_DST must match provii-crypto / the protocol spec"
+    );
+    // Golden: vk_id of a fixed byte string under the canonical DST. A change here
+    // almost certainly means the domain separator regressed.
+    assert_eq!(
+        vk_id_from_vk_bytes(b"provii-vk-id-regression-fixture"),
+        3_047_386_798,
+    );
+}
